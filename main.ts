@@ -28,6 +28,9 @@
 
 import { runBars, type BarsState, type Batch, type BuyInput, type SellInput } from './vendor/makefun-bars.ts';
 
+/** The traded symbol, taken from the harness hello (the universe's only symbol). */
+let symbol = 'CBBTC';
+
 const FAST_BARS = 30;
 const SLOW_BARS = 60;
 const SLOPE_BARS = 10;
@@ -63,11 +66,15 @@ function step(e: Ema, close: number): void {
 }
 
 await runBars({
+  onHello(state: BarsState) {
+    const first = state.hello.symbols[0];
+    if (first !== undefined) symbol = first.symbol;
+  },
   onBatch(state: BarsState, batch: Batch) {
     for (const fill of batch.fills) {
       if (fill.status === 'filled' && !fill.client_id.startsWith('_')) filledOrders++;
     }
-    const bar = batch.bars.find((b) => b.symbol === 'CBBTC');
+    const bar = batch.bars.find((b) => b.symbol === symbol);
     if (bar === undefined) return [];
     const close = Number(bar.c);
     step(fast, close);
@@ -75,19 +82,19 @@ await runBars({
     if (slow.value !== null) slowHistory.push(slow.value);
     if (state.warmingUp) return [];
 
-    const held = state.positions.get('CBBTC');
+    const held = state.positions.get(symbol);
     const orders: (BuyInput | SellInput)[] = [];
     if (fast.value !== null && slow.value !== null && slowHistory.length > SLOPE_BARS) {
       const gapBps = ((fast.value - slow.value) / slow.value) * 10_000;
       const slopeBps = ((slow.value - slowHistory[slowHistory.length - 1 - SLOPE_BARS]!) / slowHistory[slowHistory.length - 1 - SLOPE_BARS]!) * 10_000;
       if (held !== undefined) {
         if (gapBps <= 0 || slopeBps < -SLOPE_BPS) {
-          orders.push({ side: 'sell', symbol: 'CBBTC', qty: held.qty, max_slippage_bps: MAX_SLIPPAGE_BPS });
+          orders.push({ side: 'sell', symbol, qty: held.qty, max_slippage_bps: MAX_SLIPPAGE_BPS });
         }
       } else if (gapBps > ENTRY_GAP_BPS && slopeBps > SLOPE_BPS) {
         const cash = state.cash;
         if (cash >= BigInt(state.hello.fees.min_notional_quote_units)) {
-          orders.push({ side: 'buy', symbol: 'CBBTC', notional_quote_units: cash, max_slippage_bps: MAX_SLIPPAGE_BPS });
+          orders.push({ side: 'buy', symbol, notional_quote_units: cash, max_slippage_bps: MAX_SLIPPAGE_BPS });
         }
       }
     }
@@ -96,7 +103,7 @@ await runBars({
     if (orders.length === 0 && held === undefined && filledOrders === 0 && batch.t - state.hello.first_close_ms >= PROBE_AFTER_MS) {
       const stake = (state.cash * BigInt(PROBE_BPS)) / 10_000n;
       if (stake >= BigInt(state.hello.fees.min_notional_quote_units)) {
-        orders.push({ side: 'buy', symbol: 'CBBTC', notional_quote_units: stake, max_slippage_bps: MAX_SLIPPAGE_BPS });
+        orders.push({ side: 'buy', symbol, notional_quote_units: stake, max_slippage_bps: MAX_SLIPPAGE_BPS });
       }
     }
     return orders;
